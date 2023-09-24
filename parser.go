@@ -6,20 +6,20 @@ import (
 	"io"
 )
 
-// ChunkedBodyParser parses chunked-encoded bodies in streaming mode. This means, that it returns
+// Parser parses chunked-encoded bodies in streaming mode. This means, that it returns
 // chunk value, that may be incomplete. Or it can return contents of one chunk, even if there's
 // more data to parse (and the next chunk is available). So always check, whether there's something
 // returned as extra
-type ChunkedBodyParser struct {
+type Parser struct {
 	state parserState
 
 	settings    Settings
 	chunkLength int64
 }
 
-// NewChunkedBodyParser returns new *ChunkedBodyParser
-func NewChunkedBodyParser(settings Settings) *ChunkedBodyParser {
-	return &ChunkedBodyParser{
+// NewParser returns new *ChunkedBodyParser
+func NewParser(settings Settings) *Parser {
+	return &Parser{
 		state:    eChunkLength1Char,
 		settings: settings,
 	}
@@ -27,10 +27,10 @@ func NewChunkedBodyParser(settings Settings) *ChunkedBodyParser {
 
 // Parse a stream of chunked body. When body is parsed till the end, io.EOF is returned.
 // Other data, not belonging to the body, will be returned as extra
-func (c *ChunkedBodyParser) Parse(data []byte, trailer bool) (chunk, extra []byte, err error) {
+func (p *Parser) Parse(data []byte, trailer bool) (chunk, extra []byte, err error) {
 	var offset int64
 
-	switch c.state {
+	switch p.state {
 	case eChunkLength1Char:
 		goto chunkLength1Char
 	case eChunkLength:
@@ -58,7 +58,7 @@ func (c *ChunkedBodyParser) Parse(data []byte, trailer bool) (chunk, extra []byt
 	case eFooterCRLFCR:
 		goto footerCRLFCR
 	default:
-		panic(fmt.Sprintf("BUG: unknown state: %v", c.state))
+		panic(fmt.Sprintf("BUG: unknown state: %v", p.state))
 	}
 
 chunkLength1Char:
@@ -66,9 +66,9 @@ chunkLength1Char:
 		return nil, nil, ErrBadRequest
 	}
 
-	c.chunkLength = int64(hex.Un(data[offset]))
+	p.chunkLength = int64(hex.Un(data[offset]))
 	offset++
-	c.state = eChunkLength
+	p.state = eChunkLength
 	goto chunkLength
 
 chunkLength:
@@ -76,19 +76,19 @@ chunkLength:
 		switch data[offset] {
 		case '\r':
 			offset++
-			c.state = eChunkLengthCR
+			p.state = eChunkLengthCR
 			goto chunkLengthCR
 		case '\n':
 			offset++
-			c.state = eChunkLengthCRLF
+			p.state = eChunkLengthCRLF
 			goto chunkLengthCRLF
 		default:
 			if !hex.Is(data[offset]) {
 				return nil, nil, ErrBadRequest
 			}
 
-			c.chunkLength = (c.chunkLength << 4) | int64(hex.Un(data[offset]))
-			if c.chunkLength > c.settings.MaxChunkSize {
+			p.chunkLength = (p.chunkLength << 4) | int64(hex.Un(data[offset]))
+			if p.chunkLength > p.settings.MaxChunkSize {
 				return nil, nil, ErrTooLarge
 			}
 		}
@@ -104,7 +104,7 @@ chunkLengthCR:
 	switch data[offset] {
 	case '\n':
 		offset++
-		c.state = eChunkLengthCRLF
+		p.state = eChunkLengthCRLF
 		goto chunkLengthCRLF
 	default:
 		return nil, nil, ErrBadRequest
@@ -115,15 +115,15 @@ chunkLengthCRLF:
 		return nil, nil, nil
 	}
 
-	switch c.chunkLength {
+	switch p.chunkLength {
 	case 0:
 		switch data[offset] {
 		case '\r':
 			offset++
-			c.state = eLastChunkCR
+			p.state = eLastChunkCR
 			goto lastChunkCR
 		case '\n':
-			c.state = eChunkLength1Char
+			p.state = eChunkLength1Char
 
 			return nil, data[offset+1:], io.EOF
 		default:
@@ -132,11 +132,11 @@ chunkLengthCRLF:
 			}
 
 			offset++
-			c.state = eFooter
+			p.state = eFooter
 			goto footer
 		}
 	default:
-		c.state = eChunkBody
+		p.state = eChunkBody
 		goto chunkBody
 	}
 
@@ -145,13 +145,13 @@ chunkBody:
 		return nil, nil, nil
 	}
 
-	if int64(len(data[offset:])) > c.chunkLength {
-		c.state = eChunkBodyEnd
+	if int64(len(data[offset:])) > p.chunkLength {
+		p.state = eChunkBodyEnd
 
-		return data[offset : offset+c.chunkLength], data[offset+c.chunkLength:], nil
+		return data[offset : offset+p.chunkLength], data[offset+p.chunkLength:], nil
 	}
 
-	c.chunkLength -= int64(len(data[offset:]))
+	p.chunkLength -= int64(len(data[offset:]))
 
 	return data[offset:], nil, nil
 
@@ -163,11 +163,11 @@ chunkBodyEnd:
 	switch data[offset] {
 	case '\r':
 		offset++
-		c.state = eChunkBodyCR
+		p.state = eChunkBodyCR
 		goto chunkBodyCR
 	case '\n':
 		offset++
-		c.state = eChunkBodyCRLF
+		p.state = eChunkBodyCRLF
 		goto chunkBodyCRLF
 	default:
 		return nil, nil, ErrBadRequest
@@ -181,7 +181,7 @@ chunkBodyCR:
 	switch data[offset] {
 	case '\n':
 		offset++
-		c.state = eChunkBodyCRLF
+		p.state = eChunkBodyCRLF
 		goto chunkBodyCRLF
 	default:
 		return nil, nil, ErrBadRequest
@@ -195,26 +195,26 @@ chunkBodyCRLF:
 	switch data[offset] {
 	case '\r':
 		offset++
-		c.state = eLastChunkCR
+		p.state = eLastChunkCR
 		goto lastChunkCR
 	case '\n':
 		if !trailer {
-			c.state = eChunkLength1Char
+			p.state = eChunkLength1Char
 
 			return nil, data[offset+1:], io.EOF
 		}
 
 		offset++
-		c.state = eFooter
+		p.state = eFooter
 		goto footer
 	default:
-		c.chunkLength = int64(hex.Un(data[offset]))
-		if c.chunkLength > c.settings.MaxChunkSize {
+		p.chunkLength = int64(hex.Un(data[offset]))
+		if p.chunkLength > p.settings.MaxChunkSize {
 			return nil, nil, ErrTooLarge
 		}
 
 		offset++
-		c.state = eChunkLength
+		p.state = eChunkLength
 		goto chunkLength
 	}
 
@@ -226,13 +226,13 @@ lastChunkCR:
 	switch data[offset] {
 	case '\n':
 		if !trailer {
-			c.state = eChunkLength1Char
+			p.state = eChunkLength1Char
 
 			return nil, data[offset+1:], io.EOF
 		}
 
 		offset++
-		c.state = eFooter
+		p.state = eFooter
 		goto footer
 	default:
 		return nil, nil, ErrBadRequest
@@ -243,11 +243,11 @@ footer:
 		switch data[offset] {
 		case '\r':
 			offset++
-			c.state = eFooterCR
+			p.state = eFooterCR
 			goto footerCR
 		case '\n':
 			offset++
-			c.state = eFooterCRLF
+			p.state = eFooterCRLF
 			goto footerCRLF
 		}
 	}
@@ -262,7 +262,7 @@ footerCR:
 	switch data[offset] {
 	case '\n':
 		offset++
-		c.state = eFooterCRLF
+		p.state = eFooterCRLF
 		goto footerCRLF
 	default:
 		return nil, nil, ErrBadRequest
@@ -276,15 +276,15 @@ footerCRLF:
 	switch data[offset] {
 	case '\r':
 		offset++
-		c.state = eFooterCRLFCR
+		p.state = eFooterCRLFCR
 		goto footerCRLFCR
 	case '\n':
-		c.state = eChunkLength1Char
+		p.state = eChunkLength1Char
 
 		return nil, data[offset+1:], io.EOF
 	default:
 		offset++
-		c.state = eFooter
+		p.state = eFooter
 		goto footer
 	}
 
@@ -295,7 +295,7 @@ footerCRLFCR:
 
 	switch data[offset] {
 	case '\n':
-		c.state = eChunkLength1Char
+		p.state = eChunkLength1Char
 
 		return nil, data[offset+1:], io.EOF
 	default:
