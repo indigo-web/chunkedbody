@@ -1,4 +1,4 @@
-package chunkedbodyparser
+package chunkedbody
 
 import (
 	"strings"

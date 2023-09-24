@@ -1,4 +1,4 @@
-package chunkedbodyparser
+package chunkedbody
 
 // Settings is a set of limitations for parser
 type Settings struct {

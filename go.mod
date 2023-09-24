@@ -1,4 +1,4 @@
-module github.com/indigo-web/chunkedbodyparser
+module github.com/indigo-web/chunkedbody
 
 go 1.18
 
